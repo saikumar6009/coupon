@@ -1,84 +1,4 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>JioMart Coupon Generator & Checker</title>
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
-  <style>
-    .sticky-top { position: sticky; top: 0; z-index: 2; }
-  </style>
-</head>
-<body class="p-4 bg-light">
-<div class="container">
-  <h1 class="mb-4">🎟️ JioMart Coupon</h1>
-
-  <form id="configForm" class="row g-3 mb-4">
-    <div class="col-md-6">
-      <label class="form-label">Cart ID</label>
-      <input class="form-control" id="cartId" required />
-    </div>
-    <div class="col-md-6">
-      <label class="form-label">Auth Token</label>
-      <input class="form-control" id="authToken" required />
-    </div>
-    <div class="col-md-6">
-      <label class="form-label">User ID</label>
-      <input class="form-control" id="userId" required />
-    </div>
-    <div class="col-md-6">
-      <label class="form-label">PINCODE</label>
-      <input class="form-control" id="pin" required />
-    </div>
-    <div class="col-md-4">
-      <label class="form-label">How many coupons?</label>
-      <input type="number" class="form-control" id="count" value="10" min="1" />
-    </div>
-    <div class="col-md-4">
-      <label class="form-label">Prefix (optional)</label>
-      <input class="form-control" id="prefix" placeholder="e.g. T25 or M7N" />
-    </div>
-    <div class="col-md-4">
-      <label class="form-label">Mode</label>
-      <select class="form-select" id="mode">
-        <option value="auto" selected>Auto (detect by prefix)</option>
-        <option value="alternating">Alternating (Digit + Letter)</option>
-        <option value="numeric">Numeric (T + 10 digits)</option>
-      </select>
-    </div>
-    <div class="col-12">
-      <label class="form-label">Custom Coupon List (optional)</label>
-      <textarea class="form-control" id="customCoupons" rows="4" placeholder="Paste coupons here..."></textarea>
-    </div>
-    <div class="col-12 d-flex gap-2">
-      <button class="btn btn-primary w-100">Generate / Check</button>
-      <button type="button" id="downloadBtn" class="btn btn-success">⬇️ Download Valid Codes</button>
-    </div>
-  </form>
-
-  <div class="card shadow-sm">
-    <div class="card-body">
-      <h4>Results</h4>
-      <div style="max-height: 400px; overflow-y: auto;">
-        <table class="table table-bordered table-striped">
-          <thead class="table-light sticky-top">
-            <tr>
-              <th>#</th>
-              <th>Coupon</th>
-              <th>Status</th>
-              <th>Message</th>
-              <th>ID</th>
-            </tr>
-          </thead>
-          <tbody id="resultTable"></tbody>
-        </table>
-      </div>
-    </div>
-  </div>
-</div>
-
 <script>
-// ---------------- Coupon generation helpers ----------------
 const digitWeights = { "1":0.2,"8":0.2,"9":0.18,"6":0.15,"0":0.12,"4":0.1,"2":0.015,"3":0.015,"5":0.015,"7":0.015 };
 const letterWeights = {Z:.1,C:.1,N:.1,L:.08,J:.08,E:.08,A:.08,R:.07,T:.07,U:.06,W:.04,Y:.04,O:.04,Q:.03,K:.03,S:.03,D:.02,G:.02,X:.02,H:.02,F:.01,V:.01,M:.005,P:.005,B:.005,I:.005};
 "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("").forEach(l=>{if(!letterWeights[l]) letterWeights[l]=0.001;});
@@ -139,7 +59,7 @@ document.getElementById("configForm").addEventListener("submit", async e=>{
 
   const userIds=userIdGenerator(baseUserId);
   let currentUserId=baseUserId;
-  const batchSize=5;
+  const batchSize=2; // smaller batch to reduce throttling
 
   for(let i=0;i<coupons.length;i+=batchSize){
     const batch=coupons.slice(i,i+batchSize);
@@ -147,20 +67,35 @@ document.getElementById("configForm").addEventListener("submit", async e=>{
       const row=document.createElement("tr");
       row.innerHTML=`<td>${i+j+1}</td><td>${coupon}</td><td>⏳ Checking...</td><td></td><td>${currentUserId}</td>`;
       tableBody.appendChild(row);
+
       let attempt=0, success=false;
-      while(attempt<3 && !success){
+      while(attempt<5 && !success){ // allow more retries
         try{
           const res=await fetch("/api/check-coupon",{
             method:"POST",
             headers:{"Content-Type":"application/json"},
             body:JSON.stringify({coupon,cartId,authToken,userId:currentUserId,pin})
           });
-          if(res.status===403){
+
+          // Switch userId immediately on 403
+          if(res.status===403 || res.status===429){
             const nextId=userIds.next();
-            if(!nextId.done){currentUserId=nextId.value; console.warn("⚠️ 403 → switched User ID:",currentUserId);}
-            attempt++; continue;
+            if(!nextId.done){currentUserId=nextId.value; console.warn("⚠️ Blocked → switched User ID:",currentUserId);}
+            attempt++;
+            await sleep(5000 * attempt); // backoff
+            continue;
           }
-          const data=await res.json();
+
+          // Check Content-Type to detect non-JSON responses
+          const contentType=res.headers.get("content-type") || "";
+          if(!contentType.includes("application/json")){
+            throw new Error("API blocked or returned non-JSON");
+          }
+
+          let data;
+          try { data = await res.json(); } 
+          catch(e){ throw new Error("Malformed API response"); }
+
           if(data.result?.status==="success"||data.result?.result?.[0]?.applicable){
             const info=data.result?.additional_general_info||{};
             row.cells[2].innerHTML="✅ Valid";
@@ -175,16 +110,18 @@ document.getElementById("configForm").addEventListener("submit", async e=>{
             row.className="table-danger";
           }
           success=true;
+
         }catch(err){
           row.cells[2].innerHTML="⚠️ Error";
           row.cells[3].innerHTML=err.message;
           row.className="table-warning";
           attempt++;
-          await sleep(2000*attempt);
+          await sleep(5000 * attempt); // longer exponential backoff
         }
       }
     }));
-    await sleep(3000);
+
+    await sleep(7000); // delay between batches
   }
 });
 
