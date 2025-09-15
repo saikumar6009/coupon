@@ -1,123 +1,146 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>JioMart Coupon Checker</title>
-<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-<style>.sticky-top { position: sticky; top: 0; z-index: 2; }</style>
+  <meta charset="UTF-8">
+  <title>JioMart Coupon Checker</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
 </head>
-<body class="p-4 bg-light">
+<body class="p-4">
+  <div class="container">
+    <h1 class="mb-4">JioMart Coupon Checker</h1>
 
-<div class="container">
-  <h1 class="mb-4">🎟️ JioMart Coupon Checker</h1>
-
-  <form id="configForm" class="row g-3 mb-4">
-    <div class="col-md-6"><label class="form-label">Cart ID</label><input class="form-control" id="cartId" required></div>
-
-    <div class="col-12">
-      <label class="form-label">User Sessions (UserID,AuthToken,PIN per line)</label>
-      <textarea class="form-control" id="userSessions" rows="4" placeholder="123456,abcd1234,400001"></textarea>
-      <small class="text-muted">One session per line. Rotates automatically to avoid blocks.</small>
-    </div>
-
-    <div class="col-md-4"><label class="form-label">How many coupons?</label><input type="number" class="form-control" id="count" value="10" min="1"></div>
-    <div class="col-md-4"><label class="form-label">Prefix (optional)</label><input class="form-control" id="prefix" placeholder="e.g. T25 or M7N"></div>
-    <div class="col-md-4"><label class="form-label">Mode</label>
-      <select class="form-select" id="mode">
-        <option value="auto" selected>Auto</option>
-        <option value="alternating">Alternating</option>
-        <option value="numeric">Numeric (T + 10 digits)</option>
-      </select>
-    </div>
-
-    <div class="col-12"><label class="form-label">Custom Coupon List (optional)</label><textarea class="form-control" id="customCoupons" rows="4"></textarea></div>
-
-    <div class="col-12 d-flex gap-2">
-      <button type="submit" class="btn btn-primary w-100">Generate / Check</button>
-      <button type="button" id="downloadBtn" class="btn btn-success">⬇️ Download Valid Codes</button>
-    </div>
-  </form>
-
-  <div class="card shadow-sm">
-    <div class="card-body">
-      <h4>Results</h4>
-      <div style="max-height:400px; overflow-y:auto;">
-        <table class="table table-bordered table-striped">
-          <thead class="table-light sticky-top">
-            <tr><th>#</th><th>Coupon</th><th>Status</th><th>Message</th><th>Session</th></tr>
-          </thead>
-          <tbody id="resultTable"></tbody>
-        </table>
+    <form id="couponForm" class="mb-3">
+      <div class="mb-2">
+        <label class="form-label">Cart ID</label>
+        <input type="text" id="cartId" class="form-control" required>
       </div>
-    </div>
+      <div class="mb-2">
+        <label class="form-label">Sessions (UserID,AuthToken,Pin per line)</label>
+        <textarea id="sessions" class="form-control" rows="4" placeholder="userid,authtoken,pin" required></textarea>
+      </div>
+      <div class="mb-2">
+        <label class="form-label">Coupons (one per line)</label>
+        <textarea id="coupons" class="form-control" rows="6" placeholder="T1234567890" required></textarea>
+      </div>
+      <button class="btn btn-primary" type="submit">Start Checking</button>
+    </form>
+
+    <table class="table table-bordered" id="resultsTable">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Coupon</th>
+          <th>Status</th>
+          <th>Details</th>
+          <th>Session</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+
+    <button id="downloadBtn" class="btn btn-success mt-3" style="display:none;">Download Valid Coupons</button>
   </div>
-</div>
 
-<script>
-window.addEventListener('DOMContentLoaded', () => {
-const digitWeights={ "1":0.2,"8":0.2,"9":0.18,"6":0.15,"0":0.12,"4":0.1,"2":0.015,"3":0.015,"5":0.015,"7":0.015 };
-const letterWeights={Z:.1,C:.1,N:.1,L:.08,J:.08,E:.08,A:.08,R:.07,T:.07,U:.06,W:.04,Y:.04,O:.04,Q:.03,K:.03,S:.03,D:.02,G:.02,X:.02,H:.02,F:.01,V:.01,M:.005,P:.005,B:.005,I:.005};
-"ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("").forEach(l=>{if(!letterWeights[l]) letterWeights[l]=0.001;});
-function weightedChoice(weights){const items=Object.keys(weights), probs=Object.values(weights); let r=Math.random()*probs.reduce((a,b)=>a+b,0);for(let i=0;i<items.length;i++){r-=probs[i]; if(r<=0) return items[i];} return items[items.length-1];}
-function generateCoupon(prefix="",mode="auto"){const clean=(prefix||"").toUpperCase().replace(/[^A-Z0-9]/g,""); if(mode==="numeric"||(mode==="auto"&&/^T\d*$/.test(clean))){let code=clean.length?clean:"T"; while(code.length<11) code+=Math.floor(Math.random()*10); return code.slice(0,11);} let code=clean.slice(0,10), nextDigit=code.length===0?true:isNaN(code[code.length-1]); while(code.length<10){code+=nextDigit?weightedChoice(digitWeights):weightedChoice(letterWeights); nextDigit=!nextDigit;} return code;}
-const sleep=ms=>new Promise(r=>setTimeout(r,ms));
-let validCoupons=[];
-function createSessionPoolFromTextarea(){const textarea=document.getElementById("userSessions").value.trim(); const lines=textarea.split("\n").map(l=>l.trim()).filter(Boolean); const pool=[]; lines.forEach(line=>{const [userId,authToken,pin]=line.split(",").map(s=>s.trim()); if(userId && authToken && pin) pool.push({userId,authToken,pin,cooldown:0});}); return pool;}
-function pickNextSession(pool){const now=Date.now(); for(const s of pool) if(s.cooldown<=now) return s; return pool.reduce((a,b)=>a.cooldown<a.cooldown?a:b);}
-const form=document.getElementById("configForm"); const tableBody=document.getElementById("resultTable"); const downloadBtn=document.getElementById("downloadBtn");
+  <script>
+    const form = document.getElementById("couponForm");
+    const tableBody = document.querySelector("#resultsTable tbody");
+    const downloadBtn = document.getElementById("downloadBtn");
+    let validCoupons = [];
 
-form.addEventListener("submit", async e=>{
-  e.preventDefault(); tableBody.innerHTML=""; validCoupons=[];
-  const cartId=document.getElementById("cartId").value;
-  const count=parseInt(document.getElementById("count").value);
-  const prefix=document.getElementById("prefix").value.trim();
-  const mode=document.getElementById("mode").value;
-  const custom=document.getElementById("customCoupons").value.trim();
-  const pool=createSessionPoolFromTextarea();
-  let coupons=custom.length?custom.split("\n").map(c=>c.trim()).filter(Boolean):[];
-  if(coupons.length===0){const gen=new Set(); while(coupons.length<count){const c=generateCoupon(prefix,mode); if(!gen.has(c)){gen.add(c);coupons.push(c);}}}
-  
-  let throttleDelay=3000;
+    function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
 
-  for(let i=0;i<coupons.length;i++){
-    const coupon=coupons[i]; const row=document.createElement("tr");
-    row.innerHTML=`<td>${i+1}</td><td>${coupon}</td><td>⏳ Checking...</td><td></td><td>-</td>`; tableBody.appendChild(row);
+    form.addEventListener("submit", async (e)=>{
+      e.preventDefault();
+      tableBody.innerHTML = "";
+      validCoupons = [];
+      downloadBtn.style.display = "none";
 
-    let attempt=0, success=false;
-    while(attempt<5 && !success){
-      const session=pickNextSession(pool); row.cells[4].innerText=session.userId;
-      try{
-        const res=await fetch("/api/check-coupon",{method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({coupon,cartId,userId:session.userId,authToken:session.authToken,pin:session.pin})});
-        if(res.status===403||res.status===429){ throttleDelay+=2000; session.cooldown=Date.now()+throttleDelay; attempt++; await sleep(throttleDelay); continue; }
-        const ct=res.headers.get("content-type")||""; if(!ct.includes("application/json")) throw new Error("API blocked / non-JSON");
-        const data=await res.json();
-        if(data.result?.status==="success"||data.result?.result?.[0]?.applicable){
-          const info=data.result?.additional_general_info||{};
-          row.cells[2].innerHTML="✅ Valid";
-          row.cells[3].innerHTML=`cart_id:${info.cart_id||"?"}, customer_id:${info.customer_id||"?"}`;
-          row.className="table-success"; validCoupons.push(coupon);
-        } else {
-          const reason=data.error?.reason||data.result?.reason||data.result?.result?.[0]||{};
-          row.cells[2].innerHTML="❌ Invalid"; row.cells[3].innerHTML=`${reason.reason_code||"UNKNOWN"} - ${reason.reason_eng||"Unknown"}`;
-          row.className="table-danger";
-        }
-        success=true; throttleDelay=Math.max(throttleDelay-500,1000); session.cooldown=Date.now()+1000;
-      }catch(err){
-        row.cells[2].innerHTML="⚠️ Error"; row.cells[3].innerHTML=err.message; row.className="table-warning";
-        throttleDelay+=2000; attempt++; await sleep(throttleDelay);
+      const cartId = document.getElementById("cartId").value.trim();
+      const sessions = document.getElementById("sessions").value.trim().split("\n")
+        .map(l=>{const [userId,authToken,pin]=l.split(",").map(x=>x.trim());return{userId,authToken,pin,cooldown:0};})
+        .filter(s=>s.userId&&s.authToken&&s.pin);
+      const coupons = document.getElementById("coupons").value.trim().split("\n").map(c=>c.trim()).filter(Boolean);
+
+      if(!cartId||!sessions.length||!coupons.length){alert("Please fill all fields correctly");return;}
+
+      function pickNextSession(pool){
+        const now = Date.now();
+        for(const s of pool) if(s.cooldown<=now) return s;
+        return pool.reduce((a,b)=>a.cooldown<a.cooldown?a:b);
       }
-    }
-    await sleep(throttleDelay);
-  }
-});
 
-downloadBtn.addEventListener("click", ()=>{
-  if(validCoupons.length===0){alert("No valid coupons!"); return;}
-  const blob=new Blob([validCoupons.join("\n")],{type:"text/plain"});
-  const url=URL.createObjectURL(blob); const a=document.createElement("a"); a.href=url; a.download="valid_coupons.txt"; a.click(); URL.revokeObjectURL(url);
-});
-});
-</script>
+      let throttleDelay=3000;
+
+      for(let i=0;i<coupons.length;i++){
+        const coupon=coupons[i];
+        const row=document.createElement("tr");
+        row.innerHTML=`<td>${i+1}</td><td>${coupon}</td><td>⏳ Checking...</td><td></td><td>-</td>`;
+        tableBody.appendChild(row);
+
+        let attempt=0,success=false;
+        while(attempt<5&&!success){
+          const session=pickNextSession(sessions);
+          row.cells[4].innerText=session.userId;
+          try{
+            const res=await fetch("/api/check-coupon",{
+              method:"POST",
+              headers:{"Content-Type":"application/json"},
+              body:JSON.stringify({coupon,cartId,userId:session.userId,authToken:session.authToken,pin:session.pin})
+            });
+
+            if(res.status===403||res.status===429){
+              throttleDelay+=2000;
+              session.cooldown=Date.now()+throttleDelay;
+              attempt++;await sleep(throttleDelay);
+              continue;
+            }
+
+            const ct=res.headers.get("content-type")||"";
+            if(!ct.includes("application/json")) throw new Error("API blocked / non-JSON");
+
+            const data=await res.json();
+            if(data.result?.status==="success"||data.result?.result?.[0]?.applicable){
+              const info=data.result?.additional_general_info||{};
+              row.cells[2].innerHTML="✅ Valid";
+              row.cells[3].innerHTML=`cart_id:${info.cart_id||"?"}, customer_id:${info.customer_id||"?"}`;
+              row.className="table-success";validCoupons.push(coupon);
+              success=true;throttleDelay=Math.max(throttleDelay-500,1000);
+              session.cooldown=Date.now()+1000;
+            }else{
+              let reasonText="";
+              if(data.error){ reasonText=JSON.stringify(data.error); }
+              else if(data.result?.reason){ reasonText=JSON.stringify(data.result.reason); }
+              else if(data.result?.result?.[0]){ reasonText=JSON.stringify(data.result.result[0]); }
+              else{ reasonText="Unknown response: "+JSON.stringify(data); }
+
+              row.cells[2].innerHTML="❌ Invalid";
+              row.cells[3].innerHTML=reasonText;
+              row.className="table-danger";
+              success=true;
+            }
+          }catch(err){
+            row.cells[2].innerHTML="⚠️ Error";
+            row.cells[3].innerHTML=err.message;
+            row.className="table-warning";
+            throttleDelay+=2000;
+            attempt++;await sleep(throttleDelay);
+          }
+        }
+
+        await sleep(throttleDelay);
+      }
+
+      if(validCoupons.length){
+        downloadBtn.style.display="inline-block";
+        downloadBtn.onclick=()=>{
+          const blob=new Blob([validCoupons.join("\n")],{type:"text/plain"});
+          const a=document.createElement("a");
+          a.href=URL.createObjectURL(blob);
+          a.download="valid_coupons.txt";
+          a.click();
+        };
+      }
+    });
+  </script>
 </body>
 </html>
