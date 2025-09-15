@@ -20,18 +20,23 @@ export default async function handler(req,res){
     const response=await axios.get("https://www.jiomart.com/mst/rest/v1/5/cart/apply_coupon",{
       params:{coupon_code:coupon,cart_id:cartId},
       headers:{authtoken:authToken,userid:userId,pin,Accept:"application/json, text/plain, */*"},
-      timeout:10000
+      timeout:15000
     });
 
-    const data=response.data||{};
+    const contentType=response.headers['content-type'] || '';
+    if(!contentType.includes('application/json')){
+      return res.status(429).json({ error: 'API blocked or non-JSON', retry: true });
+    }
+
+    const data=response.data || {};
     if(!data.result && !data.error){
-      return res.status(502).json({error:"Unexpected API response"});
+      return res.status(502).json({error:"Unexpected API response", retry:true});
     }
 
     return res.status(200).json({coupon,result:data});
 
   }catch(err){
-    const message=err.response?.data||err.message||"Unknown error";
+    const message=err.response?.data || err.message || "Unknown error";
     return res.status(500).json({error:message,retry:true});
   }
 }
