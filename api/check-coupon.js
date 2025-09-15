@@ -10,15 +10,14 @@ export default async function handler(req, res) {
       let data = "";
       req.on("data", chunk => { data += chunk; });
       req.on("end", () => {
-        try {
-          resolve(JSON.parse(data || "{}"));
-        } catch (err) { reject(err); }
+        try { resolve(JSON.parse(data || "{}")); }
+        catch (err) { reject(err); }
       });
     });
 
     const { coupon, cartId, authToken, userId, pin } = body;
     if (!coupon || !cartId || !authToken || !userId || !pin) {
-      return res.status(400).json({ error: "Missing required fields" });
+      return res.status(400).json({ error: "Missing required fields", body });
     }
 
     const response = await axios.get(
@@ -29,16 +28,17 @@ export default async function handler(req, res) {
           authtoken: authToken,
           userid: userId,
           pin: pin,
-          Accept: "application/json, text/plain, */*"
+          Accept: "application/json, text/plain, */*",
+          "User-Agent": "Mozilla/5.0"
         },
-        timeout: 10000 // 10s timeout
+        timeout: 10000
       }
     );
 
     return res.status(200).json({ coupon, result: response.data });
   } catch (err) {
     return res.status(500).json({
-      error: err.response?.data || err.message
+      error: err.response?.data || err.message || "Unknown error"
     });
   }
 }
