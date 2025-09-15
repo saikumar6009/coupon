@@ -10,14 +10,17 @@
   </style>
 </head>
 <body class="p-4 bg-light">
+
 <div class="container">
   <h1 class="mb-4">🎟️ JioMart Coupon</h1>
 
   <form id="configForm" class="row g-3 mb-4">
     <div class="col-md-6"><label class="form-label">Cart ID</label><input class="form-control" id="cartId" required /></div>
-    <div class="col-md-6"><label class="form-label">Auth Token</label><input class="form-control" id="authToken" required /></div>
-    <div class="col-md-6"><label class="form-label">User ID</label><input class="form-control" id="userId" required /></div>
-    <div class="col-md-6"><label class="form-label">PINCODE</label><input class="form-control" id="pin" required /></div>
+    <div class="col-12">
+      <label class="form-label">User Sessions (UserID,AuthToken,PIN per line)</label>
+      <textarea class="form-control" id="userSessions" rows="4" placeholder="123456,abcd1234,400001"></textarea>
+      <small class="text-muted">One session per line. Rotates automatically to avoid blocks.</small>
+    </div>
     <div class="col-md-4"><label class="form-label">How many coupons?</label><input type="number" class="form-control" id="count" value="10" min="1" /></div>
     <div class="col-md-4"><label class="form-label">Prefix (optional)</label><input class="form-control" id="prefix" placeholder="e.g. T25 or M7N" /></div>
     <div class="col-md-4"><label class="form-label">Mode</label>
@@ -27,9 +30,9 @@
         <option value="numeric">Numeric (T + 10 digits)</option>
       </select>
     </div>
-    <div class="col-12"><label class="form-label">Custom Coupon List (optional)</label><textarea class="form-control" id="customCoupons" rows="4" placeholder="Paste coupons here..."></textarea></div>
+    <div class="col-12"><label class="form-label">Custom Coupon List (optional)</label><textarea class="form-control" id="customCoupons" rows="4"></textarea></div>
     <div class="col-12 d-flex gap-2">
-      <button class="btn btn-primary w-100">Generate / Check</button>
+      <button type="submit" class="btn btn-primary w-100">Generate / Check</button>
       <button type="button" id="downloadBtn" class="btn btn-success">⬇️ Download Valid Codes</button>
     </div>
   </form>
@@ -40,7 +43,7 @@
       <div style="max-height:400px; overflow-y:auto;">
         <table class="table table-bordered table-striped">
           <thead class="table-light sticky-top">
-            <tr><th>#</th><th>Coupon</th><th>Status</th><th>Message</th><th>ID</th></tr>
+            <tr><th>#</th><th>Coupon</th><th>Status</th><th>Message</th><th>Session</th></tr>
           </thead>
           <tbody id="resultTable"></tbody>
         </table>
@@ -50,17 +53,17 @@
 </div>
 
 <script>
-window.addEventListener('DOMContentLoaded', ()=>{
+window.addEventListener('DOMContentLoaded', () => {
+  console.log("JS loaded, DOM ready");
+
   const digitWeights={ "1":0.2,"8":0.2,"9":0.18,"6":0.15,"0":0.12,"4":0.1,"2":0.015,"3":0.015,"5":0.015,"7":0.015 };
   const letterWeights={Z:.1,C:.1,N:.1,L:.08,J:.08,E:.08,A:.08,R:.07,T:.07,U:.06,W:.04,Y:.04,O:.04,Q:.03,K:.03,S:.03,D:.02,G:.02,X:.02,H:.02,F:.01,V:.01,M:.005,P:.005,B:.005,I:.005};
   "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("").forEach(l=>{if(!letterWeights[l]) letterWeights[l]=0.001;});
-  
+
   function weightedChoice(weights){
-    const items=Object.keys(weights);
-    const probs=Object.values(weights);
+    const items=Object.keys(weights); const probs=Object.values(weights);
     let r=Math.random()*probs.reduce((a,b)=>a+b,0);
-    for(let i=0;i<items.length;i++){r-=probs[i]; if(r<=0) return items[i];}
-    return items[items.length-1];
+    for(let i=0;i<items.length;i++){r-=probs[i]; if(r<=0) return items[i];} return items[items.length-1];
   }
 
   function generateCoupon(prefix="",mode="auto"){
@@ -69,35 +72,118 @@ window.addEventListener('DOMContentLoaded', ()=>{
       let code=clean.length?clean:"T"; while(code.length<11) code+=Math.floor(Math.random()*10); return code.slice(0,11);
     }
     let code=clean.slice(0,10), nextDigit=code.length===0?true:isNaN(code[code.length-1]);
-    while(code.length<10){code+=nextDigit?weightedChoice(digitWeights):weightedChoice(letterWeights); nextDigit=!nextDigit;}
+    while(code.length<10){ code+=nextDigit?weightedChoice(digitWeights):weightedChoice(letterWeights); nextDigit=!nextDigit; }
     return code;
   }
 
   const sleep=ms=>new Promise(r=>setTimeout(r,ms));
   let validCoupons=[];
 
-  function createSessionPool(baseUserId, authToken, pin, size=20){
-    const pool=[];
-    for(let i=0;i<size;i++) pool.push({userId:"0".repeat(i)+baseUserId, authToken, pin, cooldown:0});
+  function createSessionPoolFromTextarea() {
+    const textarea = document.getElementById("userSessions").value.trim();
+    const lines = textarea.split("\n").map(l => l.trim()).filter(Boolean);
+    const pool = [];
+    lines.forEach(line => {
+      const [userId, authToken, pin] = line.split(",").map(s => s.trim());
+      if(userId && authToken && pin) pool.push({ userId, authToken, pin, cooldown: 0 });
+    });
+    if(pool.length===0){
+      const userId=document.getElementById("userId")?.value||"";
+      const authToken=document.getElementById("authToken")?.value||"";
+      const pin=document.getElementById("pin")?.value||"";
+      pool.push({ userId, authToken, pin, cooldown:0 });
+    }
     return pool;
   }
+
   function pickNextSession(pool){
-    const now=Date.now();
-    for(let s of pool) if(s.cooldown<=now) return s;
+    const now = Date.now();
+    for(const s of pool) if(s.cooldown <= now) return s;
     return pool.reduce((a,b)=>a.cooldown<a.cooldown?a:b);
   }
 
-  document.getElementById("configForm").addEventListener("submit", async e=>{
+  const form=document.getElementById("configForm");
+  const tableBody=document.getElementById("resultTable");
+  const downloadBtn=document.getElementById("downloadBtn");
+
+  form.addEventListener("submit", async e=>{
     e.preventDefault();
-    validCoupons=[]; 
+    console.log("Form intercepted");
+
+    tableBody.innerHTML=""; validCoupons=[];
     const cartId=document.getElementById("cartId").value;
-    const authToken=document.getElementById("authToken").value;
-    const baseUserId=document.getElementById("userId").value;
-    const pin=document.getElementById("pin").value;
     const count=parseInt(document.getElementById("count").value);
     const prefix=document.getElementById("prefix").value.trim();
     const mode=document.getElementById("mode").value;
     const custom=document.getElementById("customCoupons").value.trim();
-    const tableBody=document.getElementById("resultTable"); tableBody.innerHTML="";
+    const pool=createSessionPoolFromTextarea();
 
-    let coupons=custom.length?custom.split("\
+    let coupons=custom.length?custom.split("\n").map(c=>c.trim()).filter(Boolean):[];
+    if(coupons.length===0){
+      const gen=new Set();
+      while(coupons.length<count){ const c=generateCoupon(prefix,mode); if(!gen.has(c)){gen.add(c);coupons.push(c);} }
+    }
+
+    const batchSize=2;
+
+    for(let i=0;i<coupons.length;i+=batchSize){
+      const batch=coupons.slice(i,i+batchSize);
+      await Promise.all(batch.map(async (coupon,j)=>{
+        const row=document.createElement("tr");
+        row.innerHTML=`<td>${i+j+1}</td><td>${coupon}</td><td>⏳ Checking...</td><td></td><td>-</td>`;
+        tableBody.appendChild(row);
+
+        let attempt=0, success=false;
+        while(attempt<5 && !success){
+          const session=pickNextSession(pool);
+          row.cells[4].innerText=session.userId;
+          try{
+            const res=await fetch("/api/check-coupon",{
+              method:"POST",
+              headers:{"Content-Type":"application/json"},
+              body:JSON.stringify({coupon,cartId,userId:session.userId,authToken:session.authToken,pin:session.pin})
+            });
+
+            if(res.status===403||res.status===429){ 
+              session.cooldown=Date.now()+5000*(attempt+1); attempt++; await sleep(5000*(attempt+1)); continue; 
+            }
+
+            const ct=res.headers.get("content-type")||"";
+            if(!ct.includes("application/json")) throw new Error("API blocked / non-JSON");
+
+            const data=await res.json();
+            if(data.result?.status==="success"||data.result?.result?.[0]?.applicable){
+              const info=data.result?.additional_general_info||{};
+              row.cells[2].innerHTML="✅ Valid";
+              row.cells[3].innerHTML=`cart_id: ${info.cart_id||"?"}, customer_id: ${info.customer_id||"?"}`;
+              row.className="table-success"; validCoupons.push(coupon);
+            } else {
+              const reason=data.error?.reason||data.result?.reason||data.result?.result?.[0]||{};
+              row.cells[2].innerHTML="❌ Invalid";
+              row.cells[3].innerHTML=`${reason.reason_code||"UNKNOWN"} - ${reason.reason_eng||"Unknown"}`;
+              row.className="table-danger";
+            }
+            success=true; session.cooldown=Date.now()+3000;
+          }catch(err){
+            row.cells[2].innerHTML="⚠️ Error"; row.cells[3].innerHTML=err.message; row.className="table-warning";
+            attempt++; await sleep(5000*attempt);
+          }
+        }
+      }));
+      await sleep(5000);
+    }
+  });
+
+  downloadBtn.addEventListener("click", ()=>{
+    if(validCoupons.length===0){alert("No valid coupons!"); return;}
+    const blob=new Blob([validCoupons.join("\n")],{type:"text/plain"});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement("a"); a.href=url; a.download="valid_coupons.txt"; a.click();
+    URL.revokeObjectURL(url);
+  });
+
+});
+</script>
+
+</body>
+</html>
